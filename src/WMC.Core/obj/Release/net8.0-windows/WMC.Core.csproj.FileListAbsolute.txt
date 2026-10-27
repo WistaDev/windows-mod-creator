@@ -1,0 +1,12 @@
+C:\Users\Longhorn2004\Desktop\windows-mod-creator\src\WMC.Core\bin\Release\net8.0-windows\WMC.Core.deps.json
+C:\Users\Longhorn2004\Desktop\windows-mod-creator\src\WMC.Core\bin\Release\net8.0-windows\WMC.Core.dll
+C:\Users\Longhorn2004\Desktop\windows-mod-creator\src\WMC.Core\bin\Release\net8.0-windows\WMC.Core.pdb
+C:\Users\Longhorn2004\Desktop\windows-mod-creator\src\WMC.Core\obj\Release\net8.0-windows\WMC.Core.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\Longhorn2004\Desktop\windows-mod-creator\src\WMC.Core\obj\Release\net8.0-windows\WMC.Core.AssemblyInfoInputs.cache
+C:\Users\Longhorn2004\Desktop\windows-mod-creator\src\WMC.Core\obj\Release\net8.0-windows\WMC.Core.AssemblyInfo.cs
+C:\Users\Longhorn2004\Desktop\windows-mod-creator\src\WMC.Core\obj\Release\net8.0-windows\WMC.Core.csproj.CoreCompileInputs.cache
+C:\Users\Longhorn2004\Desktop\windows-mod-creator\src\WMC.Core\obj\Release\net8.0-windows\WMC.Core.sourcelink.json
+C:\Users\Longhorn2004\Desktop\windows-mod-creator\src\WMC.Core\obj\Release\net8.0-windows\WMC.Core.dll
+C:\Users\Longhorn2004\Desktop\windows-mod-creator\src\WMC.Core\obj\Release\net8.0-windows\refint\WMC.Core.dll
+C:\Users\Longhorn2004\Desktop\windows-mod-creator\src\WMC.Core\obj\Release\net8.0-windows\WMC.Core.pdb
+C:\Users\Longhorn2004\Desktop\windows-mod-creator\src\WMC.Core\obj\Release\net8.0-windows\ref\WMC.Core.dll
