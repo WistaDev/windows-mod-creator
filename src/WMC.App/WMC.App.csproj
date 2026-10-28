@@ -16,4 +16,8 @@
     <ProjectReference Include="..\WMC.Core\WMC.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="tools\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

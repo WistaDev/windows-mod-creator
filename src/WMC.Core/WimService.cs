@@ -36,19 +36,23 @@ public static class WimService
     public static async Task MountAsync(
         WmcProject project, int index, IProgress<string> log, CancellationToken ct = default)
     {
-        string image = project.ImageFile ?? throw new InvalidOperationException("install.wim / install.esd not found.");
+        string image = project.ImageFile ?? throw new InvalidOperationException("No WIM/ESD image found in the extracted ISO.");
 
         if (image.EndsWith(".esd", StringComparison.OrdinalIgnoreCase))
         {
             // ESD is read-only: export the chosen edition to an editable WIM.
-            string wim = Path.Combine(project.SourcesDir, "install.wim");
-            log.Report("install.esd detected: converting the selected edition to install.wim (this can take a while)...");
+            string wim = Path.ChangeExtension(image, ".wim");
+            if (File.Exists(wim))
+                throw new InvalidOperationException(
+                    $"Cannot convert {Path.GetFileName(image)}: {Path.GetFileName(wim)} already exists in the same folder. Select that WIM instead, or remove it.");
+            log.Report($"{Path.GetFileName(image)} is an ESD: converting the selected edition to {Path.GetFileName(wim)} (this can take a while)...");
             await ProcessRunner.RunOrThrowAsync("dism.exe",
                 $"/Export-Image /SourceImageFile:\"{image}\" /SourceIndex:{index} /DestinationImageFile:\"{wim}\" /Compress:max /CheckIntegrity",
                 log, ct);
             File.Delete(image);
             image = wim;
             index = 1;
+            project.SelectedImage = Path.GetRelativePath(project.IsoDir, wim);
         }
 
         File.SetAttributes(image, FileAttributes.Normal);

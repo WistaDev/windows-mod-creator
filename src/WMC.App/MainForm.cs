@@ -14,6 +14,7 @@ public sealed class MainForm : Form
     private readonly TabPage _pgProject = new("Project");
     private readonly TabPage _pgEdition = new("Edition");
     private readonly TabPage _pgApps = new("Apps");
+    private readonly TabPage _pgFiles = new("Files");
     private readonly TabPage _pgBuild = new("Build");
 
     private readonly TextBox _log = new()
@@ -49,6 +50,9 @@ public sealed class MainForm : Form
     private readonly Button _btnMount = Btn("Mount selected", 120);
     private readonly Button _btnUnmountCommit = Btn("Commit and unmount", 130);
     private readonly Button _btnUnmountDiscard = Btn("Discard and unmount", 130);
+    private readonly ComboBox _cmbWim = new() { DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly Button _btnWimRescan = Btn("Rescan");
+    private bool _loadingWimList;
 
     // Apps tab
     private readonly TextBox _txtAppSrc = new() { ReadOnly = true };
@@ -64,6 +68,30 @@ public sealed class MainForm : Form
     private readonly Button _btnPublish = Btn("Publish", 90);
     private readonly Label _lblAppsHint = new() { AutoSize = true, Margin = new Padding(8, 6, 0, 0) };
     private readonly ListView _lvApps = NewListView(("Name", 160), ("Version", 70), ("Publisher", 140), ("Uninstaller", 80), ("Installed to", 300));
+
+    // Metadata tab
+    private readonly TabPage _pgMeta = new("Metadata");
+    private readonly ListView _lvMeta = NewListView(("#", 40), ("Original", 60), ("Name", 230), ("Description", 320));
+    private readonly TextBox _txtMetaName = new(), _txtMetaDesc = new(), _txtMetaDispName = new(),
+                             _txtMetaDispDesc = new(), _txtMetaFlags = new();
+    private readonly TextBox _txtMetaExtra = new() { Multiline = true, AcceptsReturn = true, ScrollBars = ScrollBars.Vertical, Height = 64 };
+    private readonly Button _btnMetaUp = Btn("Move up"), _btnMetaDown = Btn("Move down"),
+                            _btnMetaRemove = Btn("Remove"), _btnMetaReload = Btn("Reload");
+    private readonly Button _btnMetaApply = Btn("Apply changes", 110);
+    private readonly Label _lblMetaHint = new() { AutoSize = true, Margin = new Padding(8, 6, 0, 0) };
+    private List<ImageEdit> _edits = new();
+    private List<ImageMeta>? _pendingMetas;
+    private int _origCount;
+    private bool _loadingEditor;
+
+    // Files tab
+    private readonly TextBox _txtFileSrc = new() { ReadOnly = true };
+    private readonly List<string> _fileSources = new();
+    private readonly ComboBox _cmbFileDest = new() { DropDownStyle = ComboBoxStyle.DropDown };
+    private readonly CheckBox _chkOverwrite = new() { Text = "Overwrite existing files", Checked = true, AutoSize = true };
+    private readonly Button _btnAddFiles = Btn("Add to image", 110);
+    private readonly Label _lblFilesHint = new() { AutoSize = true, Margin = new Padding(8, 6, 0, 0) };
+    private readonly ListView _lvFiles = NewListView(("Source", 340), ("Destination in image", 420));
 
     // Build tab
     private readonly TextBox _txtOutIso = new();
@@ -82,7 +110,9 @@ public sealed class MainForm : Form
 
         BuildProjectTab();
         BuildEditionTab();
+        BuildMetadataTab();
         BuildAppsTab();
+        BuildFilesTab();
         BuildBuildTab();
 
         _tabs.TabPages.Add(_pgProject);
@@ -131,7 +161,7 @@ public sealed class MainForm : Form
         return t;
     }
 
-    private static void AddRow(TableLayoutPanel t, string label, Control ctl, Button? btn = null)
+    private static void AddRow(TableLayoutPanel t, string label, Control ctl, Control? btn = null)
     {
         int r = t.RowCount++;
         t.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -214,8 +244,20 @@ public sealed class MainForm : Form
         _btnUnmountDiscard.Click += (_, _) => OnUnmount(commit: false);
         _lvEditions.SelectedIndexChanged += (_, _) => UpdateState();
 
-        _pgEdition.Controls.Add(_lvEditions);
+        // Which WIM/ESD of the ISO to modify
+        var top = NewTable();
+        AddRow(top, "WIM file:", _cmbWim, _btnWimRescan);
+        AddWide(top, new Label
+        {
+            Text = "The image to modify. install.wim / install.esd hold the Windows editions; boot.wim is the Windows PE / Setup environment.",
+            AutoSize = true,
+        });
+        _cmbWim.SelectedIndexChanged += OnWimChanged;
+        _btnWimRescan.Click += (_, _) => { BindWimList(); Log($"Found {_cmbWim.Items.Count} WIM/ESD file(s) in the ISO."); };
+
+        _pgEdition.Controls.Add(_lvEditions);   // Fill first
         _pgEdition.Controls.Add(buttons);
+        _pgEdition.Controls.Add(top);           // last added = top-most
     }
 
     private void BuildAppsTab()
@@ -271,6 +313,97 @@ public sealed class MainForm : Form
         _pgApps.Controls.Add(NewGroup("Application files", files));        // last added = top-most
     }
 
+    private void BuildFilesTab()
+    {
+        var t = NewTable();
+
+        var btnFiles = Btn("Files...", 80);
+        btnFiles.Click += (_, _) =>
+        {
+            using var d = new OpenFileDialog { Title = "Select files to add to the image", Multiselect = true };
+            if (d.ShowDialog(this) == DialogResult.OK) SetFileSources(d.FileNames);
+        };
+        var btnFolder = Btn("Folder...", 80);
+        btnFolder.Click += (_, _) =>
+        {
+            using var d = new FolderBrowserDialog { Description = "Folder to add to the image (copied as a subfolder with the same name)" };
+            if (d.ShowDialog(this) == DialogResult.OK) SetFileSources(new[] { d.SelectedPath });
+        };
+        var pick = new FlowLayoutPanel { AutoSize = true, WrapContents = false };
+        pick.Controls.Add(btnFiles);
+        pick.Controls.Add(btnFolder);
+
+        _cmbFileDest.Items.AddRange(FileInjector.CommonDestinations.Cast<object>().ToArray());
+        _cmbFileDest.Text = FileInjector.CommonDestinations[0];
+
+        AddRow(t, "Files / folder:", _txtFileSrc, pick);
+        AddRow(t, "Destination folder:", _cmbFileDest);
+        AddWide(t, new Label
+        {
+            Text = "Destination is a folder inside the image; type any path, e.g. C:\\Users\\Public\\Desktop.\r\n" +
+                   "Public\\Desktop shows the files to every user; Default\\Desktop only to users created after the install.\r\n" +
+                   "A folder is copied as a subfolder with its own name.",
+            AutoSize = true,
+        });
+        AddWide(t, _chkOverwrite);
+
+        var addRow = new FlowLayoutPanel { AutoSize = true, Margin = new Padding(0, 6, 0, 0) };
+        addRow.Controls.Add(_btnAddFiles);
+        addRow.Controls.Add(_lblFilesHint);
+        AddWide(t, addRow);
+        _btnAddFiles.Click += OnAddFiles;
+
+        var listGroup = new GroupBox { Text = "Added files", Dock = DockStyle.Fill, Padding = new Padding(6, 2, 6, 6) };
+        listGroup.Controls.Add(_lvFiles);
+
+        _pgFiles.Padding = new Padding(6);
+        _pgFiles.Controls.Add(listGroup);                                  // Fill first
+        _pgFiles.Controls.Add(NewGroup("Add to image", t));                // last added = top-most
+    }
+
+    private void BuildMetadataTab()
+    {
+        _lvMeta.Dock = DockStyle.Top;
+        _lvMeta.Height = 130;
+
+        var listButtons = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 4, 0, 4) };
+        listButtons.Controls.AddRange(new Control[] { _btnMetaUp, _btnMetaDown, _btnMetaRemove, _btnMetaReload });
+
+        var t = NewTable();
+        AddRow(t, "Name:", _txtMetaName);
+        AddRow(t, "Description:", _txtMetaDesc);
+        AddRow(t, "Display name:", _txtMetaDispName);
+        AddRow(t, "Display description:", _txtMetaDispDesc);
+        AddRow(t, "Flags:", _txtMetaFlags);
+        AddRow(t, "Extra properties:", _txtMetaExtra);
+        AddWide(t, new Label
+        {
+            Text = "Extra properties: one KEY=VALUE per line, e.g. WINDOWS/PRODUCTNAME=My Windows.\r\n" +
+                   "Empty fields are left unchanged. The order of the list above is the new index order.",
+            AutoSize = true,
+        });
+
+        var applyRow = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 6, 0, 0) };
+        applyRow.Controls.Add(_btnMetaApply);
+        applyRow.Controls.Add(_lblMetaHint);
+
+        foreach (var tb in new[] { _txtMetaName, _txtMetaDesc, _txtMetaDispName, _txtMetaDispDesc, _txtMetaFlags, _txtMetaExtra })
+            tb.TextChanged += (_, _) => OnEditorChanged();
+
+        _lvMeta.SelectedIndexChanged += (_, _) => { LoadEditor(); UpdateState(); };
+        _btnMetaUp.Click += (_, _) => MoveEdit(-1);
+        _btnMetaDown.Click += (_, _) => MoveEdit(+1);
+        _btnMetaRemove.Click += OnMetaRemove;
+        _btnMetaReload.Click += OnMetaReload;
+        _btnMetaApply.Click += OnMetaApply;
+
+        _pgMeta.Padding = new Padding(6);
+        _pgMeta.Controls.Add(applyRow);                                          // added in reverse: last = top-most
+        _pgMeta.Controls.Add(NewGroup("Selected edition", t));
+        _pgMeta.Controls.Add(listButtons);
+        _pgMeta.Controls.Add(_lvMeta);
+    }
+
     private void BuildBuildTab()
     {
         var t = NewTable();
@@ -313,8 +446,10 @@ public sealed class MainForm : Form
         {
             await IsoService.ExtractAsync(iso, proj.IsoDir, p);
             proj.Extracted = true;
+            proj.SelectedImage = proj.FindImages().FirstOrDefault() ?? "";
             proj.Save();
             editions = await ReadEditionsAsync(proj, p);
+            _pendingMetas = await WimMetadata.ReadAsync(proj.ImageFile!);
         }, onDone: () =>
         {
             _project = proj;
@@ -322,6 +457,9 @@ public sealed class MainForm : Form
             BindEditions();
             _txtOutIso.Text = Path.Combine(proj.WorkDir, "WMC.iso");
             RefreshApps();
+            RefreshFiles();
+            BindWimList();
+            BindMeta(_pendingMetas);
             SyncTabs();
             _tabs.SelectedTab = _pgEdition;
         });
@@ -338,7 +476,12 @@ public sealed class MainForm : Form
         List<WimEdition>? editions = null;
         await RunBusy(async p =>
         {
-            if (proj.Extracted && !proj.Mounted) editions = await ReadEditionsAsync(proj, p);
+            _pendingMetas = null;
+            if (proj.Extracted && !proj.Mounted)
+            {
+                editions = await ReadEditionsAsync(proj, p);
+                _pendingMetas = await WimMetadata.ReadAsync(proj.ImageFile!);
+            }
         }, onDone: () =>
         {
             _project = proj;
@@ -349,6 +492,9 @@ public sealed class MainForm : Form
             _txtOutIso.Text = Path.Combine(proj.WorkDir, "WMC.iso");
             BindEditions();
             RefreshApps();
+            RefreshFiles();
+            BindWimList();
+            BindMeta(_pendingMetas);
             SyncTabs();
             Log($"Project opened: {proj.WorkDir}");
             if (proj.Mounted)
@@ -364,6 +510,7 @@ public sealed class MainForm : Form
         await RunBusy(p => WimService.MountAsync(_project, index, p), onDone: () =>
         {
             Log("Image mounted at: " + _project.MountDir);
+            BindWimList();   // an ESD gets converted to a WIM when mounted
             _tabs.SelectedTab = _pgApps;
         });
     }
@@ -373,6 +520,204 @@ public sealed class MainForm : Form
         if (!_project.Mounted) return;
         if (!commit && !Confirm("Discard all changes made to the image?")) return;
         await RunBusy(p => WimService.UnmountAsync(_project, commit, p));
+        if (!_project.Mounted) await ReloadImageDataAsync();   // the image content (and edition list) may have changed
+    }
+
+    // ---- WIM file selection
+
+    private async void OnWimChanged(object? sender, EventArgs e)
+    {
+        if (_loadingWimList || _busy || _project.Mounted) return;
+        if (_cmbWim.SelectedItem is not string rel) return;
+        if (rel.Equals(_project.SelectedImage, StringComparison.OrdinalIgnoreCase)) return;
+
+        _project.SelectedImage = rel;
+        _project.Save();
+        Log("Selected image: " + rel);
+        await ReloadImageDataAsync();
+    }
+
+    /// <summary>Re-reads the editions and metadata of the selected image. Stale lists are cleared first.</summary>
+    private async Task ReloadImageDataAsync()
+    {
+        var proj = _project;
+        if (!proj.Extracted) return;
+
+        _editions = new();
+        BindEditions();
+        BindMeta(null);
+
+        List<WimEdition>? editions = null;
+        await RunBusy(async p =>
+        {
+            editions = await ReadEditionsAsync(proj, p);
+            _pendingMetas = await WimMetadata.ReadAsync(proj.ImageFile!);
+        }, onDone: () =>
+        {
+            _editions = editions ?? new();
+            BindEditions();
+            BindMeta(_pendingMetas);
+        });
+    }
+
+    // ---- Files tab logic
+
+    private void SetFileSources(IEnumerable<string> paths)
+    {
+        _fileSources.Clear();
+        _fileSources.AddRange(paths);
+        _txtFileSrc.Text = string.Join("; ", _fileSources);
+    }
+
+    private async void OnAddFiles(object? sender, EventArgs e)
+    {
+        if (!_project.Mounted) { Warn("Mount an edition in the Edition tab first."); return; }
+        if (_fileSources.Count == 0) { Warn("Choose the files or the folder to add."); return; }
+
+        string dest = _cmbFileDest.Text.Trim();
+        if (dest.Length == 0) { Warn("Enter the destination folder inside the image."); return; }
+
+        var sources = _fileSources.ToList();
+        bool overwrite = _chkOverwrite.Checked;
+        List<AddedFile>? added = null;
+
+        await RunBusy(async p => added = await FileInjector.AddAsync(_project.MountDir, sources, dest, overwrite, p), onDone: () =>
+        {
+            if (added is null) return;
+            foreach (var a in added)
+            {
+                _project.Files.RemoveAll(f => f.Destination.Equals(a.Destination, StringComparison.OrdinalIgnoreCase));
+                _project.Files.Add(a);
+            }
+            _project.Save();
+            RefreshFiles();
+        });
+    }
+
+    // ---- Metadata tab logic
+
+    private void BindMeta(IEnumerable<ImageMeta>? metas)
+    {
+        _edits = (metas ?? Enumerable.Empty<ImageMeta>()).Select(m => new ImageEdit(m)).ToList();
+        _origCount = _edits.Count;
+        RefreshMetaList(0);
+    }
+
+    private void RefreshMetaList(int select)
+    {
+        _lvMeta.BeginUpdate();
+        _lvMeta.Items.Clear();
+        for (int i = 0; i < _edits.Count; i++)
+        {
+            var ed = _edits[i];
+            _lvMeta.Items.Add(new ListViewItem(new[] { (i + 1).ToString(), ed.OriginalIndex.ToString(), ed.Name, ed.Description }));
+        }
+        _lvMeta.EndUpdate();
+
+        if (_edits.Count > 0) _lvMeta.Items[Math.Clamp(select, 0, _edits.Count - 1)].Selected = true;
+        else LoadEditor();
+        UpdateState();
+    }
+
+    private int SelectedEditIndex => _lvMeta.SelectedIndices.Count > 0 ? _lvMeta.SelectedIndices[0] : -1;
+
+    private void LoadEditor()
+    {
+        _loadingEditor = true;
+        try
+        {
+            int i = SelectedEditIndex;
+            var ed = i >= 0 ? _edits[i] : null;
+            _txtMetaName.Text = ed?.Name ?? "";
+            _txtMetaDesc.Text = ed?.Description ?? "";
+            _txtMetaDispName.Text = ed?.DisplayName ?? "";
+            _txtMetaDispDesc.Text = ed?.DisplayDescription ?? "";
+            _txtMetaFlags.Text = ed?.Flags ?? "";
+            _txtMetaExtra.Text = ed?.ExtraProperties ?? "";
+        }
+        finally { _loadingEditor = false; }
+    }
+
+    private void OnEditorChanged()
+    {
+        if (_loadingEditor) return;
+        int i = SelectedEditIndex;
+        if (i < 0) return;
+
+        var ed = _edits[i];
+        ed.Name = _txtMetaName.Text;
+        ed.Description = _txtMetaDesc.Text;
+        ed.DisplayName = _txtMetaDispName.Text;
+        ed.DisplayDescription = _txtMetaDispDesc.Text;
+        ed.Flags = _txtMetaFlags.Text;
+        ed.ExtraProperties = _txtMetaExtra.Text;
+
+        _lvMeta.Items[i].SubItems[2].Text = ed.Name;
+        _lvMeta.Items[i].SubItems[3].Text = ed.Description;
+    }
+
+    private void MoveEdit(int delta)
+    {
+        int i = SelectedEditIndex, j = i + delta;
+        if (i < 0 || j < 0 || j >= _edits.Count) return;
+
+        (_edits[i], _edits[j]) = (_edits[j], _edits[i]);
+        RefreshMetaList(j);
+    }
+
+    private void OnMetaRemove(object? sender, EventArgs e)
+    {
+        int i = SelectedEditIndex;
+        if (i < 0) return;
+        if (_edits.Count <= 1) { Warn("The image must keep at least one edition."); return; }
+        if (!Confirm($"Remove '{_edits[i].Name}' from the image? (applied when you click Apply changes)")) return;
+
+        _edits.RemoveAt(i);
+        RefreshMetaList(i);
+    }
+
+    private async void OnMetaReload(object? sender, EventArgs e)
+    {
+        string? image = _project.ImageFile;
+        if (image is null) { Warn("No image found."); return; }
+
+        await RunBusy(async _ => _pendingMetas = await WimMetadata.ReadAsync(image),
+            onDone: () => BindMeta(_pendingMetas));
+    }
+
+    private async void OnMetaApply(object? sender, EventArgs e)
+    {
+        if (_project.Mounted) { Warn("Unmount the image first (Edition tab)."); return; }
+        string? image = _project.ImageFile;
+        if (image is null) { Warn("No image found."); return; }
+        if (_edits.Count == 0) { Warn("Nothing to apply."); return; }
+
+        try { _ = _edits.Any(x => x.IsDirty); }   // validates the KEY=VALUE lines
+        catch (FormatException ex) { Warn(ex.Message); return; }
+
+        bool rebuild = WimMetadata.NeedsRebuild(image, _edits, _origCount);
+        string question = rebuild
+            ? "The editions were reordered/removed (or the image is an ESD), so the image will be re-exported with DISM. This can take a long time. Continue?"
+            : "Apply the metadata changes to the image?";
+        if (!Confirm(question)) return;
+
+        var edits = _edits.ToList();
+        int origCount = _origCount;
+        List<WimEdition>? editions = null;
+
+        await RunBusy(async p =>
+        {
+            await WimMetadata.ApplyAsync(_project, edits, origCount, p);
+            string img = _project.ImageFile ?? throw new InvalidOperationException("install.wim not found after applying.");
+            _pendingMetas = await WimMetadata.ReadAsync(img);
+            editions = await WimService.GetEditionsAsync(img, null);
+        }, onDone: () =>
+        {
+            _editions = editions ?? new();
+            BindEditions();
+            BindWimList();   // a rebuilt ESD becomes a WIM
+            BindMeta(_pendingMetas);
+        });
     }
 
     private async void OnPublish(object? sender, EventArgs e)
@@ -447,7 +792,7 @@ public sealed class MainForm : Form
 
     private static async Task<List<WimEdition>> ReadEditionsAsync(WmcProject proj, IProgress<string> log)
     {
-        string image = proj.ImageFile ?? throw new InvalidOperationException("install.wim / install.esd not found in the extracted ISO.");
+        string image = proj.ImageFile ?? throw new InvalidOperationException("No .wim / .esd image found in the extracted ISO.");
         log.Report("Reading editions...");
         return await WimService.GetEditionsAsync(image, log);
     }
@@ -477,10 +822,10 @@ public sealed class MainForm : Form
         }
     }
 
-    /// <summary>The Edition, Apps and Build tabs only exist while an ISO is loaded.</summary>
+    /// <summary>Every tab except Project only exists while an ISO is loaded.</summary>
     private void SyncTabs()
     {
-        foreach (var pg in new[] { _pgEdition, _pgApps, _pgBuild })
+        foreach (var pg in new[] { _pgEdition, _pgMeta, _pgApps, _pgFiles, _pgBuild })
         {
             bool present = _tabs.TabPages.Contains(pg);
             if (_project.Extracted && !present) _tabs.TabPages.Add(pg);
@@ -494,6 +839,36 @@ public sealed class MainForm : Form
         foreach (var ed in _editions)
             _lvEditions.Items.Add(new ListViewItem(new[] { ed.Index.ToString(), ed.Name }) { Tag = ed.Index });
         if (_lvEditions.Items.Count > 0) _lvEditions.Items[0].Selected = true;
+    }
+
+    /// <summary>Fills the WIM combo with every .wim/.esd found in the ISO and selects the current image.</summary>
+    private void BindWimList()
+    {
+        _loadingWimList = true;
+        try
+        {
+            _cmbWim.Items.Clear();
+            if (!_project.Extracted) return;
+
+            foreach (var rel in _project.FindImages()) _cmbWim.Items.Add(rel);
+
+            string? current = _project.ImageFile is { } f ? Path.GetRelativePath(_project.IsoDir, f) : null;
+            int sel = -1;
+            for (int i = 0; i < _cmbWim.Items.Count; i++)
+                if (current is not null && string.Equals((string)_cmbWim.Items[i]!, current, StringComparison.OrdinalIgnoreCase))
+                    sel = i;
+
+            _cmbWim.SelectedIndex = sel;
+            if (sel >= 0) _project.SelectedImage = (string)_cmbWim.Items[sel]!;
+        }
+        finally { _loadingWimList = false; }
+    }
+
+    private void RefreshFiles()
+    {
+        _lvFiles.Items.Clear();
+        foreach (var f in _project.Files)
+            _lvFiles.Items.Add(new ListViewItem(new[] { f.Source, f.Destination }));
     }
 
     private void RefreshApps()
@@ -580,9 +955,25 @@ public sealed class MainForm : Form
         _btnBuild.Enabled = extracted;
         _lblAppsHint.Text = mounted ? "" : "Mount an edition in the Edition tab to publish apps.";
 
+        _btnAddFiles.Enabled = mounted;
+        _lblFilesHint.Text = mounted ? "" : "Mount an edition in the Edition tab to add files.";
+        _cmbWim.Enabled = extracted && !mounted;
+        _btnWimRescan.Enabled = extracted && !mounted;
+
+        int sel = SelectedEditIndex;
+        _btnMetaApply.Enabled = extracted && !mounted && _edits.Count > 0;
+        _btnMetaReload.Enabled = extracted && !mounted;
+        _btnMetaUp.Enabled = !mounted && sel > 0;
+        _btnMetaDown.Enabled = !mounted && sel >= 0 && sel < _edits.Count - 1;
+        _btnMetaRemove.Enabled = !mounted && sel >= 0 && _edits.Count > 1;
+        _lblMetaHint.Text = mounted ? "Unmount the image to edit its metadata."
+            : WimMetadata.FindWimlib() is null ? "wimlib-imagex.exe not found (needed to change properties) - see tools\\wimlib\\README.txt."
+            : "";
+
+        string image = _project.ImageFile is { } img ? Path.GetRelativePath(_project.IsoDir, img) : "(none)";
         _status.Text = mounted
-            ? $" Image mounted (index {_project.ImageIndex}) at {_project.MountDir}"
-            : extracted ? " ISO loaded. Image not mounted."
+            ? $" Mounted: {image}, index {_project.ImageIndex}, at {_project.MountDir}"
+            : extracted ? $" ISO loaded. Image: {image}. Not mounted."
                         : " No project loaded.";
     }
 
