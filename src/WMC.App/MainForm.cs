@@ -15,12 +15,13 @@ public sealed class MainForm : Form
     private readonly TabPage _pgEdition = new("Edition");
     private readonly TabPage _pgApps = new("Apps");
     private readonly TabPage _pgFiles = new("Files");
+    private readonly TabPage _pgDefaults = new("Defaults");
     private readonly TabPage _pgBuild = new("Build");
 
     private readonly TextBox _log = new()
     {
         Dock = DockStyle.Bottom,
-        Height = 160,
+        Height = 110,
         Multiline = true,
         ReadOnly = true,
         ScrollBars = ScrollBars.Vertical,
@@ -93,6 +94,21 @@ public sealed class MainForm : Form
     private readonly Label _lblFilesHint = new() { AutoSize = true, Margin = new Padding(8, 6, 0, 0) };
     private readonly ListView _lvFiles = NewListView(("Source", 340), ("Destination in image", 420));
 
+    // Defaults tab
+    private readonly Label _lblDefaultsHint = new() { Dock = DockStyle.Top, Height = 22, Padding = new Padding(8, 6, 0, 0) };
+    private readonly Label _lblShellCurrent = new() { AutoSize = true, Margin = new Padding(0, 6, 0, 6) };
+    private readonly ComboBox _cmbShell = new() { DropDownStyle = ComboBoxStyle.DropDown };
+    private readonly Button _btnShellApply = Btn("Apply shell", 100), _btnShellReset = Btn("Reset to explorer", 120),
+                            _btnShellRead = Btn("Read current", 100);
+    private readonly TextBox _txtWall = new() { ReadOnly = true };
+    private readonly CheckBox _chkWall4k = new()
+    {
+        Text = "Also replace the 4K variants (Windows\\Web\\4K\\Wallpaper\\Windows\\img0_*.jpg)",
+        Checked = true,
+        AutoSize = true,
+    };
+    private readonly Button _btnWallApply = Btn("Apply wallpaper", 120);
+
     // Build tab
     private readonly TextBox _txtOutIso = new();
     private readonly Button _btnBuild = Btn("Build ISO", 100);
@@ -102,8 +118,8 @@ public sealed class MainForm : Form
         Text = "WMC - Windows Mod Creator";
         Font = new Font("Tahoma", 8.25f);
         BackColor = SystemColors.Control;
-        ClientSize = new Size(860, 680);
-        MinimumSize = new Size(720, 560);
+        ClientSize = new Size(856, 520);       // default size (about 860 x 560 with the window frame)
+        MinimumSize = new Size(720, 520);
         StartPosition = FormStartPosition.CenterScreen;
 
         _progress = new Progress<string>(Log);
@@ -113,9 +129,11 @@ public sealed class MainForm : Form
         BuildMetadataTab();
         BuildAppsTab();
         BuildFilesTab();
+        BuildDefaultsTab();
         BuildBuildTab();
 
         _tabs.TabPages.Add(_pgProject);
+        _tabs.SelectedIndexChanged += (_, _) => { if (_tabs.SelectedTab is { } pg) FitTabScroll(pg); };
 
         // Fill control first, then the Bottom ones (WinForms docking order).
         Controls.Add(_tabs);
@@ -125,6 +143,7 @@ public sealed class MainForm : Form
         FormClosing += OnFormClosing;
         UpdateState();
         Log("Ready. Choose a Windows ISO in the Project tab and click Load ISO.");
+        Log("Log file: " + SessionLog.FilePath);
     }
 
     // ------------------------------------------------------------------ UI construction
@@ -361,6 +380,54 @@ public sealed class MainForm : Form
         _pgFiles.Controls.Add(NewGroup("Add to image", t));                // last added = top-most
     }
 
+    private void BuildDefaultsTab()
+    {
+        // Default shell
+        var shell = NewTable();
+        var btnBrowse = Btn("Browse image...", 110);
+        btnBrowse.Click += OnShellBrowse;
+        AddRow(shell, "Current shell:", _lblShellCurrent);
+        AddRow(shell, "New shell:", _cmbShell, btnBrowse);
+        AddWide(shell, new Label
+        {
+            Text = "Path as seen inside Windows, e.g. C:\\Program Files\\MyShell\\shell.exe (arguments allowed). The program must already exist in the\r\n" +
+                   "image: publish it in Apps or add it in Files first, or use Browse image. explorer.exe is the Windows default.",
+            AutoSize = true,
+        });
+        var shellButtons = new FlowLayoutPanel { AutoSize = true, Margin = new Padding(0, 6, 0, 0) };
+        shellButtons.Controls.AddRange(new Control[] { _btnShellApply, _btnShellReset, _btnShellRead });
+        AddWide(shell, shellButtons);
+
+        _cmbShell.DropDown += (_, _) => FillShellChoices();
+        _btnShellApply.Click += OnShellApply;
+        _btnShellReset.Click += OnShellReset;
+        _btnShellRead.Click += OnShellRead;
+
+        // Default wallpaper
+        var wall = NewTable();
+        var btnWall = Btn("Browse...");
+        btnWall.Click += (_, _) =>
+        {
+            using var d = new OpenFileDialog { Title = "Select the new default wallpaper", Filter = "JPEG image (*.jpg)|*.jpg" };
+            if (d.ShowDialog(this) == DialogResult.OK) _txtWall.Text = d.FileName;
+        };
+        AddRow(wall, "JPG image:", _txtWall, btnWall);
+        AddWide(wall, new Label
+        {
+            Text = "Only .jpg. The file is renamed to img0.jpg and replaces C:\\Windows\\Web\\Wallpaper\\Windows\\img0.jpg.",
+            AutoSize = true,
+        });
+        AddWide(wall, _chkWall4k);
+        _btnWallApply.Margin = new Padding(0, 6, 0, 0);
+        AddWide(wall, _btnWallApply);
+        _btnWallApply.Click += OnWallApply;
+
+        _pgDefaults.Padding = new Padding(6);
+        _pgDefaults.Controls.Add(NewGroup("Default wallpaper", wall));
+        _pgDefaults.Controls.Add(NewGroup("Default shell (Winlogon\\Shell)", shell));
+        _pgDefaults.Controls.Add(_lblDefaultsHint);   // last added = top-most
+    }
+
     private void BuildMetadataTab()
     {
         _lvMeta.Dock = DockStyle.Top;
@@ -594,6 +661,82 @@ public sealed class MainForm : Form
         });
     }
 
+    // ---- Defaults tab logic
+
+    private void FillShellChoices()
+    {
+        string text = _cmbShell.Text;
+        _cmbShell.Items.Clear();
+        _cmbShell.Items.Add(ShellService.DefaultShell);
+        foreach (var a in _project.Apps.Where(a => a.InstalledPath.Length > 0 && a.MainExe.Length > 0))
+            _cmbShell.Items.Add(Path.Combine(a.InstalledPath, a.MainExe));
+        _cmbShell.Text = text;
+    }
+
+    private void OnShellBrowse(object? sender, EventArgs e)
+    {
+        if (!_project.Mounted) { Warn("Mount an edition in the Edition tab first."); return; }
+
+        using var d = new OpenFileDialog
+        {
+            Title = "Select the shell program inside the mounted image",
+            InitialDirectory = _project.MountDir,
+            Filter = "Programs (*.exe)|*.exe|All files (*.*)|*.*",
+            DereferenceLinks = false,
+        };
+        if (d.ShowDialog(this) != DialogResult.OK) return;
+
+        string mount = Path.TrimEndingDirectorySeparator(Path.GetFullPath(_project.MountDir)) + "\\";
+        string full = Path.GetFullPath(d.FileName);
+        if (!full.StartsWith(mount, StringComparison.OrdinalIgnoreCase))
+        {
+            Warn("Pick a file inside the mounted image:\n" + _project.MountDir);
+            return;
+        }
+
+        _cmbShell.Text = @"C:\" + full[mount.Length..];
+    }
+
+    private void ShowShell(string? value) => _lblShellCurrent.Text = value ?? "(not set)";
+
+    private async void OnShellRead(object? sender, EventArgs e)
+    {
+        if (!_project.Mounted) { Warn("Mount an edition in the Edition tab first."); return; }
+
+        string? current = null;
+        await RunBusy(async p => current = await ShellService.GetAsync(_project.MountDir, p),
+            onDone: () => ShowShell(current));
+    }
+
+    private async void OnShellApply(object? sender, EventArgs e)
+    {
+        if (!_project.Mounted) { Warn("Mount an edition in the Edition tab first."); return; }
+
+        string command = _cmbShell.Text.Trim();
+        if (command.Length == 0) { Warn("Enter the shell to use."); return; }
+
+        string? result = null;
+        await RunBusy(async p => result = await ShellService.SetAsync(_project.MountDir, command, p),
+            onDone: () => ShowShell(result));
+    }
+
+    private void OnShellReset(object? sender, EventArgs e)
+    {
+        _cmbShell.Text = ShellService.DefaultShell;
+        OnShellApply(sender, e);
+    }
+
+    private async void OnWallApply(object? sender, EventArgs e)
+    {
+        if (!_project.Mounted) { Warn("Mount an edition in the Edition tab first."); return; }
+
+        string jpg = _txtWall.Text.Trim();
+        if (jpg.Length == 0) { Warn("Choose a .jpg image."); return; }
+
+        bool all = _chkWall4k.Checked;
+        await RunBusy(p => WallpaperService.SetAsync(_project.MountDir, jpg, all, p));
+    }
+
     // ---- Metadata tab logic
 
     private void BindMeta(IEnumerable<ImageMeta>? metas)
@@ -811,6 +954,7 @@ public sealed class MainForm : Form
         catch (Exception ex)
         {
             Log("ERROR: " + ex.Message);
+            SessionLog.Write(ex.ToString());   // full stack trace, file only
             MessageBox.Show(this, ex.Message, "WMC - Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
         finally
@@ -822,10 +966,29 @@ public sealed class MainForm : Form
         }
     }
 
+    /// <summary>
+    /// Lets a tab scroll instead of clipping its content when the window is too small for it.
+    /// Docked content keeps filling the tab when there is more room than needed.
+    /// </summary>
+    private void FitTabScroll(TabPage page)
+    {
+        int width = Math.Max(300, _tabs.DisplayRectangle.Width - page.Padding.Horizontal);
+        int need = page.Padding.Vertical;
+
+        foreach (Control c in page.Controls)
+        {
+            if (c.Dock == DockStyle.Fill) need += 90;   // lists keep a usable minimum height
+            else need += c.AutoSize ? c.GetPreferredSize(new Size(width, 0)).Height : c.Height;
+        }
+
+        page.AutoScroll = true;
+        page.AutoScrollMinSize = new Size(0, need);
+    }
+
     /// <summary>Every tab except Project only exists while an ISO is loaded.</summary>
     private void SyncTabs()
     {
-        foreach (var pg in new[] { _pgEdition, _pgMeta, _pgApps, _pgFiles, _pgBuild })
+        foreach (var pg in new[] { _pgEdition, _pgMeta, _pgApps, _pgFiles, _pgDefaults, _pgBuild })
         {
             bool present = _tabs.TabPages.Contains(pg);
             if (_project.Extracted && !present) _tabs.TabPages.Add(pg);
@@ -960,6 +1123,13 @@ public sealed class MainForm : Form
         _cmbWim.Enabled = extracted && !mounted;
         _btnWimRescan.Enabled = extracted && !mounted;
 
+        _btnShellApply.Enabled = mounted;
+        _btnShellReset.Enabled = mounted;
+        _btnShellRead.Enabled = mounted;
+        _btnWallApply.Enabled = mounted;
+        _lblDefaultsHint.Text = mounted ? "" : "Mount an edition in the Edition tab to change these defaults.";
+        if (!mounted) _lblShellCurrent.Text = "(mount an edition to read it)";
+
         int sel = SelectedEditIndex;
         _btnMetaApply.Enabled = extracted && !mounted && _edits.Count > 0;
         _btnMetaReload.Enabled = extracted && !mounted;
@@ -977,8 +1147,11 @@ public sealed class MainForm : Form
                         : " No project loaded.";
     }
 
-    private void Log(string message) =>
+    private void Log(string message)
+    {
         _log.AppendText($"{DateTime.Now:HH:mm:ss}  {message}{Environment.NewLine}");
+        SessionLog.Write(message);
+    }
 
     private void Warn(string message) =>
         MessageBox.Show(this, message, "WMC", MessageBoxButtons.OK, MessageBoxIcon.Warning);

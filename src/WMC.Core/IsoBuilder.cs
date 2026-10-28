@@ -7,6 +7,11 @@ public static class IsoBuilder
 {
     public static async Task<string?> FindOscdimgAsync()
     {
+        // 1) A copy placed in the tools folder next to WMC.exe wins (portable, no ADK needed).
+        string? bundled = AppPaths.FindBundledTool("oscdimg.exe");
+        if (bundled is not null) return bundled;
+
+        // 2) The installed Windows ADK.
         string pf86 = Environment.GetEnvironmentVariable("ProgramFiles(x86)") ?? @"C:\Program Files (x86)";
         string adk = Path.Combine(pf86, "Windows Kits", "10", "Assessment and Deployment Kit", "Deployment Tools");
 
@@ -29,7 +34,8 @@ public static class IsoBuilder
         string isoDir, string outputIso, string volumeLabel, IProgress<string> log, CancellationToken ct = default)
     {
         string oscdimg = await FindOscdimgAsync() ?? throw new FileNotFoundException(
-            "oscdimg.exe not found. Install the Windows ADK (Deployment Tools): https://learn.microsoft.com/windows-hardware/get-started/adk-install");
+            "oscdimg.exe not found. Copy oscdimg.exe into the 'tools' folder next to WMC.exe (from a PC with the Windows ADK), " +
+            "or install the ADK with Deployment Tools: https://learn.microsoft.com/windows-hardware/get-started/adk-install");
 
         string etfsboot = Path.Combine(isoDir, "boot", "etfsboot.com");
         string efisys = Path.Combine(isoDir, "efi", "microsoft", "boot", "efisys.bin");

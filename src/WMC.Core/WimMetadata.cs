@@ -133,24 +133,8 @@ public static class WimMetadata
         "wimlib-imagex.exe not found. Download the Windows binaries from https://wimlib.net/ and extract them " +
         "(wimlib-imagex.exe + libwim-15.dll) into the 'tools\\wimlib' folder next to WMC.exe, or add them to PATH.";
 
-    public static string? FindWimlib()
-    {
-        string baseDir = AppContext.BaseDirectory;
-        var candidates = new List<string>
-        {
-            Path.Combine(baseDir, "wimlib-imagex.exe"),
-            Path.Combine(baseDir, "tools", "wimlib-imagex.exe"),
-            Path.Combine(baseDir, "tools", "wimlib", "wimlib-imagex.exe"),
-        };
-
-        foreach (var dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries))
-        {
-            try { candidates.Add(Path.Combine(dir.Trim().Trim('"'), "wimlib-imagex.exe")); }
-            catch { /* invalid PATH entry */ }
-        }
-
-        return candidates.FirstOrDefault(File.Exists);
-    }
+    public static string? FindWimlib() =>
+        AppPaths.FindBundledTool("wimlib-imagex.exe") ?? AppPaths.FindOnPath("wimlib-imagex.exe");
 
     // ------------------------------------------------------------------ applying
 

@@ -115,13 +115,13 @@ public static class FileInjector
     }
 
     /// <summary>Quotes a path for a command line; a trailing backslash would otherwise escape the closing quote.</summary>
-    private static string Q(string path) => path.EndsWith('\\') ? $"\"{path}.\"" : $"\"{path}\"";
+    internal static string Q(string path) => path.EndsWith('\\') ? $"\"{path}.\"" : $"\"{path}\"";
 
     /// <summary>
     /// A mounted image contains junctions/symlinks (e.g. "Documents and Settings") whose targets are absolute paths.
     /// Writing through one would land on the HOST's folders, so refuse any path that goes through a link.
     /// </summary>
-    private static void EnsureNoLinks(string mountFull, string target)
+    internal static void EnsureNoLinks(string mountFull, string target)
     {
         string rel = Path.GetRelativePath(mountFull, target);
         if (rel == ".") return;
