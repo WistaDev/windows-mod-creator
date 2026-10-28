@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("WMC.Core")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+1cf73b1b85912876e52df2153c05659e04ceff06")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+87e63f5154c275fe46341f4558bf833f16540add")]
 [assembly: System.Reflection.AssemblyProductAttribute("WMC.Core")]
 [assembly: System.Reflection.AssemblyTitleAttribute("WMC.Core")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

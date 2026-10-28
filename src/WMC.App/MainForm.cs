@@ -16,6 +16,10 @@ public sealed class MainForm : Form
     private readonly TabPage _pgApps = new("Apps");
     private readonly TabPage _pgFiles = new("Files");
     private readonly TabPage _pgDefaults = new("Defaults");
+    private readonly TabPage _pgRemove = new("Remove Apps");
+    private readonly TabPage _pgTheme = new("Theme");
+    private readonly TabPage _pgRegs = new("Import Regs");
+    private readonly TabPage _pgBoot = new("Boot Screen");
     private readonly TabPage _pgBuild = new("Build");
 
     private readonly TextBox _log = new()
@@ -109,6 +113,31 @@ public sealed class MainForm : Form
     };
     private readonly Button _btnWallApply = Btn("Apply wallpaper", 120);
 
+    // Remove Apps tab
+    private readonly Label _lblRemoveHint = new() { Dock = DockStyle.Top, Height = 22, Padding = new Padding(8, 6, 0, 0) };
+    private readonly ListView _lvRemove = NewListView(("Type", 80), ("Name", 230), ("Version", 90), ("Id", 260), ("Note", 220));
+    private readonly CheckBox _chkCaps = new()
+    {
+        Text = "Include Windows capabilities (slower)",
+        Checked = true,
+        AutoSize = true,
+        Margin = new Padding(10, 5, 0, 0),
+    };
+    private readonly Button _btnRemoveScan = Btn("Scan image", 100), _btnRemoveGo = Btn("Remove checked", 120),
+                            _btnRemoveUncheck = Btn("Uncheck all", 90);
+
+    // Theme tab
+    private readonly Label _lblThemeHint = new() { Dock = DockStyle.Top, Height = 22, Padding = new Padding(8, 6, 0, 0) };
+    private readonly ListView _lvThemeValues = NewListView(("Registry key", 310), ("Value", 110), ("Current data", 380));
+    private readonly ComboBox _cmbTheme = new() { DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly Button _btnThemeScan = Btn("Scan image", 100), _btnThemeApply = Btn("Apply to checked", 130);
+
+    // Import Regs tab
+    private readonly Label _lblRegsHint = new() { Dock = DockStyle.Top, Height = 22, Padding = new Padding(8, 6, 0, 0) };
+    private readonly ListView _lvRegs = NewListView(("File", 330), ("Keys", 50), ("Goes to", 250), ("Skipped", 60), ("Status", 120));
+    private readonly Button _btnRegsAdd = Btn("Add .reg files...", 120), _btnRegsRemove = Btn("Remove", 80),
+                            _btnRegsImport = Btn("Import into image", 140);
+
     // Build tab
     private readonly TextBox _txtOutIso = new();
     private readonly Button _btnBuild = Btn("Build ISO", 100);
@@ -130,6 +159,10 @@ public sealed class MainForm : Form
         BuildAppsTab();
         BuildFilesTab();
         BuildDefaultsTab();
+        BuildRemoveTab();
+        BuildThemeTab();
+        BuildRegsTab();
+        BuildBootTab();
         BuildBuildTab();
 
         _tabs.TabPages.Add(_pgProject);
@@ -428,6 +461,109 @@ public sealed class MainForm : Form
         _pgDefaults.Controls.Add(_lblDefaultsHint);   // last added = top-most
     }
 
+    private void BuildRegsTab()
+    {
+        var top = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 0, 0, 4) };
+        top.Controls.Add(_btnRegsAdd);
+        top.Controls.Add(_btnRegsRemove);
+
+        var info = new Label
+        {
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            Padding = new Padding(0, 0, 0, 4),
+            Text = "HKLM\\SOFTWARE and HKLM\\SYSTEM go to the image; HKCR to SOFTWARE\\Classes; HKCU to the default user (new accounts);\r\n" +
+                   "HKU\\.DEFAULT to the system account. SAM, SECURITY, HARDWARE and other users are skipped. Files are applied in list order.",
+        };
+
+        var bottom = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, Padding = new Padding(0, 4, 0, 0) };
+        bottom.Controls.Add(_btnRegsImport);
+
+        _btnRegsAdd.Click += OnRegsAdd;
+        _btnRegsRemove.Click += (_, _) =>
+        {
+            foreach (ListViewItem i in _lvRegs.SelectedItems.Cast<ListViewItem>().ToList()) _lvRegs.Items.Remove(i);
+        };
+        _btnRegsImport.Click += OnRegsImport;
+
+        _pgRegs.Padding = new Padding(6);
+        _pgRegs.Controls.Add(_lvRegs);        // Fill first
+        _pgRegs.Controls.Add(bottom);
+        _pgRegs.Controls.Add(info);
+        _pgRegs.Controls.Add(top);
+        _pgRegs.Controls.Add(_lblRegsHint);   // last added = top-most
+    }
+
+    private void BuildBootTab()
+    {
+        _pgBoot.Padding = new Padding(12);
+        _pgBoot.Controls.Add(new Label { Text = "Change Boot Screen\r\n\r\nComing soon.", AutoSize = true });
+    }
+
+    private void BuildRemoveTab()
+    {
+        var top = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 0, 0, 4) };
+        top.Controls.Add(_btnRemoveScan);
+        top.Controls.Add(_chkCaps);
+
+        var bottom = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, Padding = new Padding(0, 4, 0, 0) };
+        bottom.Controls.Add(_btnRemoveGo);
+        bottom.Controls.Add(_btnRemoveUncheck);
+
+        _lvRemove.CheckBoxes = true;
+        _btnRemoveScan.Click += OnRemoveScan;
+        _btnRemoveGo.Click += OnRemoveGo;
+        _btnRemoveUncheck.Click += (_, _) => { foreach (ListViewItem i in _lvRemove.Items) i.Checked = false; };
+
+        _pgRemove.Padding = new Padding(6);
+        _pgRemove.Controls.Add(_lvRemove);        // Fill first
+        _pgRemove.Controls.Add(bottom);
+        _pgRemove.Controls.Add(top);
+        _pgRemove.Controls.Add(_lblRemoveHint);   // last added = top-most
+    }
+
+    private void BuildThemeTab()
+    {
+        // Values found in the image
+        var values = NewTable();
+        _lvThemeValues.CheckBoxes = true;
+        _lvThemeValues.Dock = DockStyle.Fill;
+        _lvThemeValues.Height = 110;
+        AddWide(values, _lvThemeValues);
+
+        var scanRow = new FlowLayoutPanel { AutoSize = true };
+        scanRow.Controls.Add(_btnThemeScan);
+        scanRow.Controls.Add(new Label
+        {
+            Text = "Values holding a .theme path. The WOW6432Node ones are checked by default.",
+            AutoSize = true,
+            Margin = new Padding(8, 6, 0, 0),
+        });
+        AddWide(values, scanRow);
+
+        // New theme
+        var apply = NewTable();
+        var btnBrowse = Btn("Browse image...", 110);
+        btnBrowse.Click += OnThemeBrowse;
+        AddRow(apply, "New theme:", _cmbTheme, btnBrowse);
+        AddWide(apply, new Label
+        {
+            Text = "The list shows the .theme files found in the image (Windows\\Resources\\Themes, Ease of Access Themes, files added in Files).\r\n" +
+                   "Only the registry values are changed; test the image to confirm how Windows applies the theme.",
+            AutoSize = true,
+        });
+        _btnThemeApply.Margin = new Padding(0, 6, 0, 0);
+        AddWide(apply, _btnThemeApply);
+
+        _btnThemeScan.Click += OnThemeScan;
+        _btnThemeApply.Click += OnThemeApply;
+
+        _pgTheme.Padding = new Padding(6);
+        _pgTheme.Controls.Add(NewGroup("Apply the theme", apply));
+        _pgTheme.Controls.Add(NewGroup("Theme values found in the image", values));
+        _pgTheme.Controls.Add(_lblThemeHint);     // last added = top-most
+    }
+
     private void BuildMetadataTab()
     {
         _lvMeta.Dock = DockStyle.Top;
@@ -675,26 +811,38 @@ public sealed class MainForm : Form
 
     private void OnShellBrowse(object? sender, EventArgs e)
     {
-        if (!_project.Mounted) { Warn("Mount an edition in the Edition tab first."); return; }
+        if (!NeedMounted()) return;
 
-        using var d = new OpenFileDialog
-        {
-            Title = "Select the shell program inside the mounted image",
-            InitialDirectory = _project.MountDir,
-            Filter = "Programs (*.exe)|*.exe|All files (*.*)|*.*",
-            DereferenceLinks = false,
-        };
-        if (d.ShowDialog(this) != DialogResult.OK) return;
+        string? path = PickFromImage("Select the shell program inside the mounted image",
+            "Programs (*.exe)|*.exe|All files (*.*)|*.*", null);
+        if (path is not null) _cmbShell.Text = path;
+    }
 
+    private bool NeedMounted()
+    {
+        if (_project.Mounted) return true;
+        Warn("Mount an edition in the Edition tab first.");
+        return false;
+    }
+
+    /// <summary>Lets the user pick a file inside the mounted image. Returns it as seen inside Windows (C:\...), or null.</summary>
+    private string? PickFromImage(string title, string filter, string? startSubfolder)
+    {
         string mount = Path.TrimEndingDirectorySeparator(Path.GetFullPath(_project.MountDir)) + "\\";
+        string start = startSubfolder is not null && Directory.Exists(Path.Combine(mount, startSubfolder))
+            ? Path.Combine(mount, startSubfolder)
+            : _project.MountDir;
+
+        using var d = new OpenFileDialog { Title = title, InitialDirectory = start, Filter = filter, DereferenceLinks = false };
+        if (d.ShowDialog(this) != DialogResult.OK) return null;
+
         string full = Path.GetFullPath(d.FileName);
         if (!full.StartsWith(mount, StringComparison.OrdinalIgnoreCase))
         {
             Warn("Pick a file inside the mounted image:\n" + _project.MountDir);
-            return;
+            return null;
         }
-
-        _cmbShell.Text = @"C:\" + full[mount.Length..];
+        return @"C:\" + full[mount.Length..];
     }
 
     private void ShowShell(string? value) => _lblShellCurrent.Text = value ?? "(not set)";
@@ -735,6 +883,184 @@ public sealed class MainForm : Form
 
         bool all = _chkWall4k.Checked;
         await RunBusy(p => WallpaperService.SetAsync(_project.MountDir, jpg, all, p));
+    }
+
+    // ---- Import Regs tab logic
+
+    private void OnRegsAdd(object? sender, EventArgs e)
+    {
+        using var d = new OpenFileDialog { Title = "Select .reg files to import", Filter = "Registry files (*.reg)|*.reg", Multiselect = true };
+        if (d.ShowDialog(this) != DialogResult.OK) return;
+
+        foreach (var f in d.FileNames)
+        {
+            if (_lvRegs.Items.Cast<ListViewItem>().Any(i => string.Equals((string)i.Tag!, f, StringComparison.OrdinalIgnoreCase)))
+                continue;
+
+            try
+            {
+                var analysis = RegFile.Transform(RegFile.Read(f).Lines).Analysis;
+                _lvRegs.Items.Add(new ListViewItem(new[]
+                {
+                    f, analysis.Keys.ToString(), analysis.TargetsText, analysis.Skipped.ToString(), "Pending",
+                }) { Tag = f });
+            }
+            catch (Exception ex)
+            {
+                Warn($"{Path.GetFileName(f)}: {ex.Message}");
+            }
+        }
+    }
+
+    private async void OnRegsImport(object? sender, EventArgs e)
+    {
+        if (!NeedMounted()) return;
+
+        var items = _lvRegs.Items.Cast<ListViewItem>().ToList();
+        if (items.Count == 0) { Warn("Add at least one .reg file."); return; }
+
+        var files = items.Select(i => (string)i.Tag!).ToList();
+        if (!Confirm($"Import {files.Count} .reg file(s) into the mounted image?\n\nThey are applied in list order. " +
+                     "This can only be undone with 'Discard and unmount'.")) return;
+
+        RegImportResult? result = null;
+        await RunBusy(async p => result = await RegImporter.ImportAsync(_project.MountDir, files, p), onDone: () =>
+        {
+            if (result is null) return;
+            foreach (var i in items)
+                i.SubItems[4].Text = result.ImportedFiles.Contains((string)i.Tag!, StringComparer.OrdinalIgnoreCase)
+                    ? "Imported" : "Nothing importable";
+
+            if (result.UnloadWarning is not null)
+                Warn("A registry hive could not be unloaded, which will block 'Commit and unmount':\n\n" + result.UnloadWarning);
+        });
+    }
+
+    // ---- Remove Apps tab logic
+
+    private async void OnRemoveScan(object? sender, EventArgs e)
+    {
+        if (!NeedMounted()) return;
+        await ScanAppsAsync();
+    }
+
+    private async Task ScanAppsAsync()
+    {
+        bool capabilities = _chkCaps.Checked;
+        List<ImageApp>? found = null;
+
+        await RunBusy(async p => found = await ImageAppsService.ScanAsync(_project.MountDir, capabilities, p),
+            onDone: () => BindImageApps(found));
+    }
+
+    private void BindImageApps(List<ImageApp>? apps)
+    {
+        _lvRemove.Items.Clear();
+        foreach (var a in apps ?? new List<ImageApp>())
+        {
+            string type = a.Kind == ImageAppKind.Appx ? "AppX" : "Capability";
+            _lvRemove.Items.Add(new ListViewItem(new[] { type, a.DisplayName, a.Version, a.Id, a.Note }) { Tag = a });
+        }
+    }
+
+    private async void OnRemoveGo(object? sender, EventArgs e)
+    {
+        if (!NeedMounted()) return;
+
+        var chosen = _lvRemove.CheckedItems.Cast<ListViewItem>().Select(i => (ImageApp)i.Tag!).ToList();
+        if (chosen.Count == 0) { Warn("Check the items to remove."); return; }
+
+        string message = $"Remove {chosen.Count} item(s) from the image?\n\nThis can only be undone with 'Discard and unmount'.";
+        var core = chosen.Where(a => a.Note.Length > 0).ToList();
+        if (core.Count > 0)
+            message += "\n\nCore components other apps depend on (removing them can break the apps that stay):\n"
+                       + string.Join("\n", core.Select(a => " - " + a.DisplayName));
+        if (!Confirm(message)) return;
+
+        RemoveResult? result = null;
+        await RunBusy(async p => result = await ImageAppsService.RemoveAsync(_project.MountDir, chosen, p), onDone: () =>
+        {
+            if (result is null) return;
+            Log($"Removed {result.Removed} of {chosen.Count} item(s).");
+            if (result.Failed.Count > 0)
+                Warn("These could not be removed:\n" + string.Join("\n", result.Failed) + "\n\nSee the log for details.");
+        });
+
+        await ScanAppsAsync();   // show what is left
+    }
+
+    // ---- Theme tab logic
+
+    private async void OnThemeScan(object? sender, EventArgs e)
+    {
+        if (!NeedMounted()) return;
+        await ScanThemeAsync();
+    }
+
+    private async Task ScanThemeAsync()
+    {
+        List<ThemeValue>? values = null;
+        List<string>? themes = null;
+        var added = _project.Files.Select(f => f.Destination).ToList();
+
+        await RunBusy(async p =>
+        {
+            values = await ThemeService.GetValuesAsync(_project.MountDir, p);
+            themes = ThemeService.FindThemes(_project.MountDir, added);
+        }, onDone: () => BindTheme(values, themes));
+    }
+
+    private void BindTheme(List<ThemeValue>? values, List<string>? themes)
+    {
+        _lvThemeValues.Items.Clear();
+        foreach (var v in values ?? new List<ThemeValue>())
+        {
+            _lvThemeValues.Items.Add(new ListViewItem(new[]
+            {
+                @"HKLM\SOFTWARE\" + v.KeyPath,
+                v.Name,
+                v.Exists ? v.Data : "(not set - will be created)",
+            })
+            {
+                Tag = v,
+                Checked = v.KeyPath == ThemeService.WowKey,
+            });
+        }
+
+        string? keep = _cmbTheme.SelectedItem as string;
+        _cmbTheme.Items.Clear();
+        foreach (var t in themes ?? new List<string>()) _cmbTheme.Items.Add(t);
+        if (keep is not null && _cmbTheme.Items.Contains(keep)) _cmbTheme.SelectedItem = keep;
+        else if (_cmbTheme.Items.Count > 0) _cmbTheme.SelectedIndex = 0;
+
+        Log($"Theme: {values?.Count ?? 0} registry value(s) and {themes?.Count ?? 0} .theme file(s) found.");
+    }
+
+    private void OnThemeBrowse(object? sender, EventArgs e)
+    {
+        if (!NeedMounted()) return;
+
+        string? path = PickFromImage("Select a .theme file inside the mounted image",
+            "Theme files (*.theme)|*.theme", @"Windows\Resources\Themes");
+        if (path is null) return;
+
+        if (!_cmbTheme.Items.Contains(path)) _cmbTheme.Items.Add(path);
+        _cmbTheme.SelectedItem = path;
+    }
+
+    private async void OnThemeApply(object? sender, EventArgs e)
+    {
+        if (!NeedMounted()) return;
+        if (_cmbTheme.SelectedItem is not string theme) { Warn("Choose the new theme (Scan image, or Browse image)."); return; }
+
+        var targets = _lvThemeValues.CheckedItems.Cast<ListViewItem>()
+            .Select(i => (ThemeValue)i.Tag!)
+            .Select(v => new ThemeTarget(v.KeyPath, v.Name))
+            .ToList();
+        if (targets.Count == 0) { Warn("Check at least one registry value to change."); return; }
+
+        await RunBusy(p => ThemeService.SetAsync(_project.MountDir, theme, targets, p));
+        await ScanThemeAsync();   // show the new values
     }
 
     // ---- Metadata tab logic
@@ -988,7 +1314,7 @@ public sealed class MainForm : Form
     /// <summary>Every tab except Project only exists while an ISO is loaded.</summary>
     private void SyncTabs()
     {
-        foreach (var pg in new[] { _pgEdition, _pgMeta, _pgApps, _pgFiles, _pgDefaults, _pgBuild })
+        foreach (var pg in new[] { _pgEdition, _pgMeta, _pgApps, _pgRemove, _pgFiles, _pgDefaults, _pgTheme, _pgRegs, _pgBoot, _pgBuild })
         {
             bool present = _tabs.TabPages.Contains(pg);
             if (_project.Extracted && !present) _tabs.TabPages.Add(pg);
@@ -1129,6 +1455,20 @@ public sealed class MainForm : Form
         _btnWallApply.Enabled = mounted;
         _lblDefaultsHint.Text = mounted ? "" : "Mount an edition in the Edition tab to change these defaults.";
         if (!mounted) _lblShellCurrent.Text = "(mount an edition to read it)";
+
+        _btnRemoveScan.Enabled = mounted;
+        _btnRemoveGo.Enabled = mounted;
+        _btnThemeScan.Enabled = mounted;
+        _btnThemeApply.Enabled = mounted;
+        _lblRemoveHint.Text = mounted ? "" : "Mount an edition in the Edition tab to find the apps you can remove.";
+        _lblThemeHint.Text = mounted ? "" : "Mount an edition in the Edition tab to change the theme.";
+        _btnRegsImport.Enabled = mounted;
+        _lblRegsHint.Text = mounted ? "" : "You can queue .reg files now; mount an edition in the Edition tab to import them.";
+        if (!mounted)
+        {
+            _lvRemove.Items.Clear();          // these lists only make sense for the mounted image
+            _lvThemeValues.Items.Clear();
+        }
 
         int sel = SelectedEditIndex;
         _btnMetaApply.Enabled = extracted && !mounted && _edits.Count > 0;

@@ -57,12 +57,10 @@ public static class ShellService
         return command;
     }
 
-    // ------------------------------------------------------------------ resolving the program inside the image
-
     /// <summary>Finds the executable part of a command line ("path args") in the image. Returns it, or null.</summary>
     private static string? FindExecutable(string mountFull, string command)
     {
-        command = ExpandVariables(command);
+        command = ImagePaths.ExpandVariables(command);
 
         if (command.StartsWith('"'))
         {
@@ -70,7 +68,7 @@ public static class ShellService
             if (end > 1)
             {
                 string quoted = command[1..end];
-                return ExistsInImage(mountFull, quoted) ? quoted : null;
+                return ImagePaths.Exists(mountFull, quoted) ? quoted : null;
             }
         }
 
@@ -79,45 +77,8 @@ public static class ShellService
         for (int n = tokens.Length; n >= 1; n--)
         {
             string candidate = string.Join(' ', tokens.Take(n));
-            if (ExistsInImage(mountFull, candidate)) return candidate;
+            if (ImagePaths.Exists(mountFull, candidate)) return candidate;
         }
         return null;
-    }
-
-    private static string ExpandVariables(string s) => s
-        .Replace("%SystemRoot%", @"C:\Windows", StringComparison.OrdinalIgnoreCase)
-        .Replace("%windir%", @"C:\Windows", StringComparison.OrdinalIgnoreCase)
-        .Replace("%SystemDrive%", "C:", StringComparison.OrdinalIgnoreCase)
-        .Replace("%ProgramFiles%", @"C:\Program Files", StringComparison.OrdinalIgnoreCase);
-
-    private static bool ExistsInImage(string mountFull, string candidate)
-    {
-        foreach (var host in HostCandidates(mountFull, candidate))
-        {
-            FileInjector.EnsureNoLinks(mountFull, host);   // never follow a link out of the image
-            if (File.Exists(host)) return true;
-        }
-        return false;
-    }
-
-    private static IEnumerable<string> HostCandidates(string mountFull, string path)
-    {
-        path = path.Trim().Trim('"').Replace('/', '\\');
-        if (path.Length >= 2 && char.IsLetter(path[0]) && path[1] == ':') path = path[2..];   // drop the drive letter
-        bool rooted = path.StartsWith('\\');
-        path = path.TrimStart('\\');
-
-        if (path.Length == 0 || path.IndexOfAny(Path.GetInvalidPathChars()) >= 0) yield break;
-
-        if (!rooted && !path.Contains('\\'))
-        {
-            // Bare name (explorer.exe): Windows looks for it in the Windows and System32 folders.
-            yield return Path.Combine(mountFull, "Windows", path);
-            yield return Path.Combine(mountFull, "Windows", "System32", path);
-            yield break;
-        }
-
-        string full = Path.GetFullPath(Path.Combine(mountFull, path));
-        if (full.StartsWith(mountFull + "\\", StringComparison.OrdinalIgnoreCase)) yield return full;
     }
 }
